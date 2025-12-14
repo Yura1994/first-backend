@@ -10,6 +10,12 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "express": "^5.1.0"
+    "bcrypt": "^6.0.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "lightweight-charts": "^5.0.9",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.16.3"
   }
 }
