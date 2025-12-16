@@ -11,6 +11,7 @@ export default function App() {
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
   const timerRef = useRef(null);
+  const volumeRef = useRef(null);
 
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [interval, setIntervalTf] = useState("1m");
@@ -34,7 +35,7 @@ export default function App() {
 
     chartRef.current = chart;
     seriesRef.current = series;
-
+    
     // resize, чтобы не ломалось при изменении окна
     const onResize = () => {
       if (!chartContainerRef.current || !chartRef.current) return;
@@ -44,7 +45,21 @@ export default function App() {
     };
     window.addEventListener("resize", onResize);
 
-    return () => {
+  
+
+    const volumeSeries = chart.addHistogramSeries({
+      priceFormat: {type: "volume"},
+      priceScaleId: "", //отдельная шкала
+    });
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: {
+      top: 0.8,   // свечи занимают верх
+      bottom: 0,  // объёмы внизу
+      },
+    }); 
+      volumeRef.current = volumeSeries;
+
+     return () => {
       window.removeEventListener("resize", onResize);
       if (timerRef.current) clearInterval(timerRef.current);
       if (chartRef.current) chartRef.current.remove();
@@ -75,8 +90,22 @@ export default function App() {
         close: c.close,
       }));
 
+      const volumes = data.candles.map((c) => {
+        const time = Math.floor(new Date(c.ts).getTime() / 1000);
+
+        //зеленые обем если close >= open, иначе красный
+        const isUp = Number(c.close) >= Number(c.open);
+
+        return {
+          time,
+          value: Number(c.volume),
+          color: isUp ? "rgba(38,166,154,0.8)" : "rgba(239,83,80,0.8)",
+        };
+      });
+
       // кладём данные в график
       seriesRef.current?.setData(candles);
+      volumeRef.current?.setData(volumes);
 
       // статус в UI
       const now = new Date().toLocaleTimeString();
@@ -87,6 +116,8 @@ export default function App() {
     } catch (e) {
       console.error("Ошибка загрузки свечей:", e);
     }
+
+    
   };
 
   // 3) При смене symbol или interval — перезагрузка данных
