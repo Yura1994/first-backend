@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createChart } from "lightweight-charts";
 
-const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"];
+const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "STRKUSDT", "PNUTUSDT"];
 const INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 // ====== Indicators helpers ======
@@ -80,11 +80,15 @@ export default function App() {
 
   const timerRef = useRef(null);
 
+  const markersRef = useRef([]); //“память”, где лежат все стрелки
+
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [interval, setIntervalTf] = useState("1m");
   const [isLive, setIsLive] = useState(true);
   const [lastUpdate, setLastUpdate] = useState("-");
   const [lastCandleTs, setLastCandleTs] = useState("-");
+    //сигналы
+  const [signals, setSignals] = useState([]);
 
   // 1) Создаём два графика (свечи+объём) и (RSI)
   useEffect(() => {
@@ -115,11 +119,13 @@ export default function App() {
 
     // EMA линии (поверх свечей)
     const ema20 = candleChart.addLineSeries({
+      // title: "EMA 20",
       color: "#2196f3",
       lineWidth: 3,
     });
     const ema50 = candleChart.addLineSeries({
-       color: "rgba(255, 152, 0, 0.9)", 
+      // title: "EMA 50",
+      color: "rgba(255, 152, 0, 0.9)", 
       lineWidth: 2,
     });
     ema20Ref.current = ema20;
@@ -209,6 +215,41 @@ export default function App() {
       });
       volumeRef.current?.setData(volumes);
 
+      //функция, которая добавляет маркер
+
+      const addCrossMarker = ({ time, type, price }) => {
+      const marker = {
+        time,
+        position: type ==="golden" ? "belowBar" : "aboveBar",
+        shape: type === "golden" ? "arrowUp" : "arrowDown",
+        color: type === "golden" ? "#00c853" : "#ff1744",
+        text:
+          type === "golden"
+            ? `Golden Cross @ ${price.toFixed(2)}`
+            : `Death Cross @ ${price.toFixed(2)}`,
+      };
+
+            // добавляем в память
+        markersRef.current = [...markersRef.current, marker];
+
+        // применяем на свечную серию
+        candleSeriesRef.current?.setMarkers(markersRef.current);
+    }
+
+    const addSignal = ({ type, symbol, interval, time, price }) => {
+      const id = `${type}-${symbol}-${interval}-${time}`;
+
+      const signal = { id, type, symbol, interval, time, price };
+
+      setSignals((prev) => {
+        // защита от дублей по id
+        if (prev.some((s) => s.id === id)) return prev;
+        //новые сверху, храним макс 10
+        return [signal, ...prev].slice(0, 10);
+      });
+    };
+
+
       // === EMA ===
       const closes = data.candles.map((c) => Number(c.close));
       const ema20Arr = calcEMA(closes, 20);
@@ -239,6 +280,79 @@ export default function App() {
       ema20Ref.current?.setData(ema20Data);
       ema50Ref.current?.setData(ema50Data);
 
+          // ===== EMA CROSS DETECTION (last 2 points) =====
+    if (ema20Data.length >= 2 && ema50Data.length >= 2) {
+      const ema20Prev = ema20Data[ema20Data.length - 2];
+      const ema20Last = ema20Data[ema20Data.length - 1];
+
+      const ema50Prev = ema50Data[ema50Data.length - 2];
+      const ema50Last = ema50Data[ema50Data.length - 1];
+
+      // diff = EMA20 - EMA50
+      const prevDiff = ema20Prev.value - ema50Prev.value;
+      const lastDiff = ema20Last.value - ema50Last.value;
+
+      // Время последней точки (на какой свече отмечаем)
+      const crossTime = ema20Last.time;
+
+      // Цена для подписи маркера (берём close последней свечи)
+      const lastClose = candles[candles.length - 1].close;
+
+      // Пересечение вверх: было <=0, стало >0
+      if (prevDiff <= 0 && lastDiff > 0) {
+        // защита от дублирования: не ставим второй раз на той же свече
+        const already = markersRef.current.some((m) => m.time === crossTime && m.shape === "arrowUp");
+        if (!already) {
+          console.log("✅ Golden cross (EMA20 crossed ABOVE EMA50)");
+          addCrossMarker({ time: crossTime, type: "golden", price: lastClose });
+
+          addSignal({
+            type: "golden",
+            symbol,
+            interval,
+            time: crossTime,
+            price: lastClose,
+          });
+        }
+      }
+
+      // Пересечение вниз: было >=0, стало <0
+      if (prevDiff >= 0 && lastDiff < 0) {
+        const already = markersRef.current.some((m) => m.time === crossTime && m.shape === "arrowDown");
+        if (!already) {
+          console.log("⚠️ Death cross (EMA20 crossed BELOW EMA50)");
+          addCrossMarker({ time: crossTime, type: "death", price: lastClose });
+
+          addSignal({
+            type: "death",
+            symbol,
+            interval,
+            time: crossTime,
+            price: lastClose,
+          });
+        }
+      }
+    }
+/*
+      // --- DERECT EMA CROSS (last two points) ---
+      if (ema20Data.length > 2 && ema50Data.length > 2){
+        const a1 = ema20Data[ema20Data.length - 2].value;
+        const a2 = ema20Data[ema20Data.length - 1].value;
+
+        const b1 = ema50Data[ema50Data.length - 2].value;
+        const b2 = ema50Data[ema50Data.length - 1].value;
+
+        const prevDiff = a1 - b1;
+        const currDiff = a2 - b2;
+
+        if(prevDiff <= 0 && currDiff > 0){
+          console.log("✅ Golden cross (EMA20 crossed ABOVE EMA50)");
+        }
+         if (prevDiff >= 0 && currDiff < 0) {
+          console.log("⚠️ Death cross (EMA20 crossed BELOW EMA50)");
+        }
+      }
+*/
       // === RSI ===
       const rsiArr = calcRSI(closes, 14);
       const rsiData = data.candles
@@ -274,10 +388,18 @@ export default function App() {
     } catch (e) {
       console.error("Ошибка загрузки свечей:", e);
     }
+
+    
   };
 
   // 3) При смене symbol/tf — перезагрузка
   useEffect(() => {
+        // сбрасываем маркеры при смене графика
+    markersRef.current = [];
+
+      setSignals([]); // сбрасываем список сигналов
+
+    candleSeriesRef.current?.setMarkers([]);
     loadCandles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, interval]);
@@ -322,8 +444,72 @@ export default function App() {
           borderRadius: 12,
           background: "#111827",
           border: "1px solid #1f2937",
-        }}
+        }}        
       >
+                {/* Панель сигналов EMA */}
+        <div
+          style={{
+            marginBottom: 12,
+            padding: 10,
+            borderRadius: 12,
+            background: "#020617",
+            border: "1px solid #1f2937",
+            maxHeight: 140,
+            overflowY: "auto",
+            fontSize: 13,
+          }}
+        >
+          <div style={{ marginBottom: 6, fontWeight: 600 }}>⚡ EMA Signals (last 10)</div>
+
+          {signals.length === 0 && (
+            <div style={{ opacity: 0.7 }}>Нет сигналов пересечения EMA.</div>
+          )}
+
+          {signals.map((s) => {
+            const date = new Date(s.time * 1000);
+            const timeStr = date.toLocaleTimeString();
+
+            const color =
+              s.type === "golden" ? "#22c55e" : "#f97373";
+
+            const label = s.type === "golden" ? "Golden Cross" : "Death Cross";
+
+            return (
+              <div
+                key={s.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  padding: "4px 0",
+                  borderBottom: "1px dashed #1f2937",
+                }}
+              >
+                <div>
+                  <span
+                    style={{
+                      padding: "2px 6px",
+                      borderRadius: 999,
+                      background: color,
+                      color: "#020617",
+                      fontWeight: 600,
+                      marginRight: 6,
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <span style={{ opacity: 0.85 }}>
+                    {s.symbol} · {s.interval}
+                  </span>
+                </div>
+                <div style={{ textAlign: "right", opacity: 0.85 }}>
+                  <div>{timeStr}</div>
+                  <div style={{ fontSize: 12 }}>@ {s.price.toFixed(2)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
         <label>
           Symbol:&nbsp;
           <select
